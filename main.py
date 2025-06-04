@@ -9,7 +9,7 @@ st.set_page_config(page_title="AR/AP Dashboard", layout="wide")
 st.title("📊 Accounts Receivable / Payable Dashboard")
 
 # Tabs
-tab1, tab2, tab3 = st.tabs(["📥 Accounts Receivable", "📤 Accounts Payable", "📚 Combined Summary"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📥 Accounts Receivable", "📤 Accounts Payable", "📚 Combined Summary", "🚨 Top Overdue Customers", "📆 Aged Receivables", "📉 Forecasted Impact", "📦 Top Vendors"])
 
 # ---------- AR TAB ----------
 with tab1:
@@ -180,3 +180,147 @@ with tab3:
         st.metric("📤 Total Payables", f"${ap_total:,.2f}")
     else:
         st.warning("Could not load combined data.")
+
+
+# ---------- TOP OVERDUE CUSTOMERS ----------
+with tab4:
+    st.subheader("🚨 Top Overdue Customers")
+    overdue_df = ar_df.copy()
+
+    # Only unpaid invoices past due date
+    overdue_df = overdue_df[
+        (overdue_df["STATUS"] != "Paid") &
+        (pd.to_datetime(overdue_df["DUEDATE"]) < pd.Timestamp.today())
+    ].copy()
+
+    if overdue_df.empty:
+        st.info("✅ No overdue invoices found.")
+    else:
+        overdue_df["DAYS_PAST_DUE"] = (pd.Timestamp.today() - pd.to_datetime(overdue_df["DUEDATE"])).dt.days
+
+        summary = (
+            overdue_df.groupby("CUSTOMERNAME")
+            .agg(
+                Total_Overdue_Amount=("INVOICEAMOUNT", "sum"),
+                Overdue_Invoices=("INVOICEID", "count"),
+                Average_Days_Late=("DAYS_PAST_DUE", "mean")
+            )
+            .sort_values(by="Total_Overdue_Amount", ascending=False)
+            .reset_index()
+        )
+
+        st.metric("🔢 Number of Overdue Customers", len(summary))
+        st.dataframe(summary)
+
+        # Optional: Bar chart
+        st.subheader("📊 Overdue Amount by Customer")
+        st.bar_chart(summary.set_index("CUSTOMERNAME")["Total_Overdue_Amount"])
+
+
+# ---------- AGED RECEIVABLES PER CUSTOMER ----------
+with tab5:
+    st.subheader("📆 Aged Receivables per Customer")
+
+    aging_df = ar_df.copy()
+    aging_df["DAYS_PAST_DUE"] = (pd.Timestamp.today() - pd.to_datetime(aging_df["DUEDATE"])).dt.days
+    aging_df["DAYS_PAST_DUE"] = aging_df["DAYS_PAST_DUE"].apply(lambda x: max(0, x))  # no negatives
+
+    def aging_bucket(days):
+        if days <= 0:
+            return "Not Due"
+        elif days <= 30:
+            return "1–30 Days"
+        elif days <= 60:
+            return "31–60 Days"
+        elif days <= 90:
+            return "61–90 Days"
+        else:
+            return "90+ Days"
+
+    aging_df["AgingBucket"] = aging_df["DAYS_PAST_DUE"].apply(aging_bucket)
+
+    # Pivot for customer vs. aging bucket
+    pivot = pd.pivot_table(
+        aging_df,
+        index="CUSTOMERNAME",
+        columns="AgingBucket",
+        values="INVOICEAMOUNT",
+        aggfunc="sum",
+        fill_value=0,
+        margins=True,
+        margins_name="Total"
+    ).reset_index()
+
+    st.dataframe(pivot)
+
+
+# ---------- Forecasting Impact of Unpaid Invoices ----------
+with tab6:
+    st.subheader("📉 Forecasted Impact of Overdue Invoices")
+
+    # Group overdue amount by month
+    forecast_df = ar_df.copy()
+    forecast_df["InvoiceMonth"] = pd.to_datetime(forecast_df["INVOICEDATE"]).dt.to_period("M").dt.to_timestamp()
+
+    monthly_trend = (
+        forecast_df[forecast_df["STATUS"] != "Paid"]
+        .groupby("InvoiceMonth")["INVOICEAMOUNT"]
+        .sum()
+        .reset_index()
+    )
+
+    # Visualization
+    chart = alt.Chart(monthly_trend).mark_line(point=True).encode(
+        x="InvoiceMonth:T",
+        y="INVOICEAMOUNT:Q",
+        tooltip=["InvoiceMonth:T", "INVOICEAMOUNT"]
+    ).properties(
+        title="Overdue Invoices Trend",
+        width=700
+    )
+
+    st.altair_chart(chart)
+
+    # Optional: Show last 3-month average and project next month
+    if len(monthly_trend) >= 3:
+        avg = monthly_trend.tail(3)["INVOICEAMOUNT"].mean()
+        st.metric("📈 Forecasted Overdue Next Month", f"${avg:,.2f}")
+
+
+# ---------- TOP VENDORS (BY PAYABLE AMOUNT) ----------
+with tab7:
+    st.subheader("🏆 Top Vendors by Payables")
+
+    # Ensure AP data is loaded
+    ap_df = run_query("SELECT * FROM AP_INVOICES")
+
+    if isinstance(ap_df, pd.DataFrame) and not ap_df.empty:
+        ap_df.columns = ap_df.columns.str.upper()
+
+        # Filter unpaid or partially paid invoices
+        unpaid_df = ap_df[ap_df["STATUS"].isin(["Unpaid", "Partially Paid"])].copy()
+
+        if unpaid_df.empty:
+            st.info("✅ No outstanding vendor payments.")
+        else:
+            unpaid_df["DAYS_PAST_DUE"] = (pd.Timestamp.today() - pd.to_datetime(unpaid_df["DUEDATE"])).dt.days
+
+            summary = (
+                unpaid_df.groupby("VENDORNAME")
+                .agg(
+                    Total_Outstanding_Amount=("INVOICEAMOUNT", "sum"),
+                    Outstanding_Invoices=("INVOICEID", "count"),
+                    Avg_Days_Past_Due=("DAYS_PAST_DUE", "mean")
+                )
+                .sort_values(by="Total_Outstanding_Amount", ascending=False)
+                .reset_index()
+            )
+
+            st.metric("🔢 Number of Vendors with Outstanding AP", len(summary))
+            st.dataframe(summary)
+
+            # Chart
+            st.subheader("📊 Outstanding Payables by Vendor")
+            st.bar_chart(summary.set_index("VENDORNAME")["Total_Outstanding_Amount"])
+    else:
+        st.warning("No AP data available.")
