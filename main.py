@@ -9,7 +9,7 @@ st.set_page_config(page_title="AR/AP Dashboard", layout="wide")
 st.title("📊 Accounts Receivable / Payable Dashboard")
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📥 Accounts Receivable", "📤 Accounts Payable", "📚 Combined Summary", "🚨 Top Overdue Customers", "📆 Aged Receivables", "📉 Forecasted Impact", "📦 Top Vendors"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["📥 Accounts Receivable", "📤 Accounts Payable", "📚 Combined Summary", "🚨 Top Overdue Customers", "📆 Aged Receivables", "📉 Forecasted Impact", "📦 Top Vendors", "📆 DSO / DPO Analysis"])
 
 # ---------- AR TAB ----------
 with tab1:
@@ -324,3 +324,37 @@ with tab7:
             st.bar_chart(summary.set_index("VENDORNAME")["Total_Outstanding_Amount"])
     else:
         st.warning("No AP data available.")
+
+# ---------- DSO/DPO ----------
+with tab8:
+    st.subheader("DSO & DPO Metrics")
+
+    # Time Period - last 30 days (can customize)
+    period_days = 30
+
+    # DSO Calculation
+    try:
+        ar_total_sales = ar_df["INVOICEAMOUNT"].sum()
+        ar_outstanding = ar_df[ar_df["STATUS"] != "Paid"]["INVOICEAMOUNT"].sum()
+        dso = round((ar_outstanding / ar_total_sales) * period_days, 2) if ar_total_sales else 0
+    except Exception as e:
+        st.error(f"Error calculating DSO: {e}")
+        dso = 0
+
+    # DPO Calculation
+    try:
+        ap_total_purchases = ap_df["INVOICEAMOUNT"].sum()
+        ap_outstanding = ap_df[ap_df["STATUS"] != "Paid"]["INVOICEAMOUNT"].sum()
+        dpo = round((ap_outstanding / ap_total_purchases) * period_days, 2) if ap_total_purchases else 0
+    except Exception as e:
+        st.error(f"Error calculating DPO: {e}")
+        dpo = 0
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("📈 Days Sales Outstanding (DSO)", f"{dso} days")
+        st.caption("How long it takes to collect payments from customers.")
+
+    with col2:
+        st.metric("📉 Days Payable Outstanding (DPO)", f"{dpo} days")
+        st.caption("How long it takes to pay suppliers.")
