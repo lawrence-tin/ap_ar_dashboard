@@ -3,6 +3,8 @@ import streamlit as st
 from snowflake_connector import run_query
 import pandas as pd
 import altair as alt
+import matplotlib.pyplot as plt
+
 
 # Set config first!
 st.set_page_config(page_title="AR/AP Dashboard", layout="wide")
@@ -358,3 +360,37 @@ with tab8:
     with col2:
         st.metric("📉 Days Payable Outstanding (DPO)", f"{dpo} days")
         st.caption("How long it takes to pay suppliers.")
+
+    
+    st.subheader("📈 DSO / DPO Trends Over Time")
+
+    # Convert date columns if needed
+    ar_df["INVOICEDATE"] = pd.to_datetime(ar_df["INVOICEDATE"])
+    ap_df["INVOICEDATE"] = pd.to_datetime(ap_df["INVOICEDATE"])
+
+    # Group by month
+    ar_df["InvoiceMonth"] = ar_df["INVOICEDATE"].dt.to_period("M").dt.to_timestamp()
+    ap_df["InvoiceMonth"] = ap_df["INVOICEDATE"].dt.to_period("M").dt.to_timestamp()
+
+    # DSO trend
+    ar_trend = ar_df.groupby("InvoiceMonth").apply(
+        lambda x: round((x[x["STATUS"] != "Paid"]["INVOICEAMOUNT"].sum() / x["INVOICEAMOUNT"].sum()) * 30, 2)
+    ).reset_index(name="DSO")
+
+    # DPO trend
+    ap_trend = ap_df.groupby("InvoiceMonth").apply(
+        lambda x: round((x[x["STATUS"] != "Paid"]["INVOICEAMOUNT"].sum() / x["INVOICEAMOUNT"].sum()) * 30, 2)
+    ).reset_index(name="DPO")
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(ar_trend["InvoiceMonth"], ar_trend["DSO"], label="DSO", marker="o", color="tab:blue")
+    ax.plot(ap_trend["InvoiceMonth"], ap_trend["DPO"], label="DPO", marker="s", color="tab:orange")
+
+    ax.set_title("DSO / DPO Trend Over Time")
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Days")
+    ax.legend()
+    ax.grid(True)
+
+    st.pyplot(fig)
